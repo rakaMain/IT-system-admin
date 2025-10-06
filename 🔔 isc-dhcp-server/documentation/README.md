@@ -1,4 +1,3 @@
-```html
 <p align="left">
   <a href="https://youtu.be/3IktL03vnOs?si=gq_VEiaHTymgFFzv">
     <img src="https://ytcards.demolab.com/?id=3IktL03vnOs&title=Cara+Install+DHCP+Server+Debian+12+-+Panduan+Lengkap&lang=en&background_color=%230d1117&title_color=%23ffffff&stats_color=%23dedede&max_title_lines=1&width=350&border_radius=8" alt="Cara Install DHCP Server Debian 12 - Panduan Lengkap" />
