@@ -1,122 +1,192 @@
-Bagus — saya jelaskan singkat, jelas, dan langsung ke poin untuk tiap pertanyaan kamu. Saya tambahkan contoh kecil dan catatan praktis. 🚀
+# 🔐  Ad‑hoc Command Ansible
 
-# 1) Apa gunanya **file `inventory`**?
-
-* **Fungsi:** menyimpan daftar host/target (IP atau hostname) yang akan dikelola Ansible.
-* **Kenapa isinya seperti itu (`192.168.1.1`, `192.168.1.2`)?** karena format paling sederhana adalah satu host per baris — Ansible cukup baca daftar itu untuk tahu ke mana harus SSH.
-* **Bisa lebih dari itu:** kamu bisa buat grup, variabel host, file YAML, atau struktur lebih kompleks. Contoh sederhana (INI style):
-
-  ```
-  webservers
-  192.168.1.1
-  192.168.1.2
-  ```
-* **Intinya:** inventory adalah “daftar alamat” yang menjadi target tugas otomatisasi.
-
-# 2) Apa gunanya command
-
-`ansible all --key-file ~/.ssh/ansible -i inventory -m ping` ? 🤔
-
-* **Tujuan:** *menguji koneksi dan otentikasi SSH* dari mesin kontrol ke semua host yang ada di file `inventory`.
-* **Penjelasan tiap bagian:**
-
-  * `ansible all` → jalankan ke semua host di inventory.
-  * `--key-file ~/.ssh/ansible` → pakai private key SSH tersebut untuk autentikasi (alternatif ke password).
-  * `-i inventory` → gunakan file inventory yang disebut `inventory`.
-  * `-m ping` → gunakan modul Ansible bernama `ping` (module ini menjalankan kecil skrip lewat SSH, bukan ICMP).
-* **Hasil yang diharapkan:** setiap host yang berhasil konek mengembalikan `pong` (contoh: `192.168.1.1 | SUCCESS => { "changed": false, "ping": "pong" }`).
-* **Catatan penting:** modul `ping` membutuhkan akses SSH dan interpreter (Python) di host target — bukan ICMP network ping.
-
-# 3) Apa gunanya **file `ansible.cfg`** dan kenapa isinya seperti itu?
-
-Contoh yang kamu tulis:
-
-```
-[default]
-inventory = inventory
-private_key_file = ~/.ssh/ansible
-```
-
-* **Fungsi `ansible.cfg`:** konfigurasi default untuk Ansible sehingga kamu tidak perlu menulis opsi panjang di tiap perintah.
-* **Mengapa setting itu berguna:**
-
-  * `inventory = inventory` → Ansible otomatis pakai file `inventory` tanpa perlu `-i inventory` di command.
-  * `private_key_file = ~/.ssh/ansible` → Ansible otomatis pakai key itu untuk autentikasi, jadi tidak perlu `--key-file` setiap kali.
-* **Manfaat praktis:** perintah jadi lebih singkat dan konsisten (`ansible all -m ping` cukup).
-* **Catatan keamanan:** pastikan file key punya permission yang aman (mis. `600`) agar SSH tidak menolak.
-
-# 4) Apa gunanya perintah-perintah ini?
-
-## `ansible all -m ping`
-
-* **Fungsi:** tes koneksi cepat ke semua host (menggunakan inventory & key dari `ansible.cfg` bila tersedia).
-* **Perbedaan dengan `ping` jaringan:** bukan ICMP — Ansible menjalankan modul Python kecil di remote dan mengembalikan `pong`.
-
-## `ansible all -m gather_facts` (atau ad-hoc module `setup`)
-
-* **Fungsi:** kumpulkan *fakta* tentang sistem target — informasi seperti OS, IP, memori, CPU, path, dsb.
-* **Catatan:** dalam playbook kata kunci `gather_facts: yes` sering dipakai; untuk ad-hoc biasanya module `setup` dipanggil: `ansible all -m setup`. Hasilnya adalah JSON besar berisi banyak variabel yang bisa dipakai di playbook.
-
-## `ansible all -m gather_facts --limit 192.168.1.1`
-
-* **Fungsi `--limit`:** batasi target hanya ke host (atau grup) tertentu. Di contoh ini hanya `192.168.1.1` yang dikumpulkan faktanya. Berguna saat ingin tes atau jalankan tugas hanya pada subset host.
-
-# 5) Ringkasan praktis & tips cepat ✅
-
-* Jika sudah punya `ansible.cfg` yang benar, cukup pakai: `ansible all -m ping`.
-* `ping` module = tes koneksi & autentikasi SSH (butuh Python di host).
-* `setup` / `gather_facts` = ambil info hardware/software host.
-* `--limit` = batasi target.
-* Gunakan inventory lebih terstruktur (grup, host_vars) bila lingkungan berkembang.
-* Pastikan key SSH dan user yang dipakai punya izin SSH ke target.
-
-Kalau mau, saya bisa:
-
-* ubah penjelasan ini ke versi slide singkat untuk presentasi, atau
-* berikan contoh `inventory` yang berisi grup + host_vars, atau
-* tunjukkan contoh output `ansible all -m setup` yang disederhanakan.
+**Deskripsi singkat:**
+Modul ini membahas penggunaan *ad‑hoc commands* Ansible untuk mengelola beberapa host secara cepat (ping, gather_facts, apt, dsb.). Ini adalah kelanjutan dari lab OpenSSH & SSH‑key (SRV1, SRV2, PC) — topologi sekarang memakai **NAT** agar semua VM punya akses internet.
 
 ---
 
-Singkat & jelas — penjelasan tentang `default` di `ansible.cfg` (dengan koreksi kecil):
+## 🔌 Topologi & Alamat (NAT — semua VM punya akses Internet)
 
-1. **Yang benar adalah `[defaults]`**, bukan `[default]`.
+**Network:** VM menggunakan adaptor NAT (dapat IP dalam subnet NAT milik VMware/VirtualBox) — contoh IP tetap yang kita gunakan di modul: `192.168.1.1`, `192.168.1.2`, `192.168.1.10` (PC). NAT memungkinkan VM mengakses internet melalui host.
 
-   * Seksi header di file `ansible.cfg` dinamai **`[defaults]`**. Jika kamu pakai `[default]`, Ansible **mengabaikannya** karena tidak cocok nama sectornya.
+**Perangkat:**
 
-2. **Apa fungsi `[defaults]`?**
+* **SRV1** (SSH & target Ansible) — `192.168.1.1`
+* **SRV2** (SSH & target Ansible) — `192.168.1.2`
+* **PC** (Control Node / Ansible workstation) — `192.168.1.10`
 
-   * Itu adalah tempat kamu menaruh pengaturan bawaan (default) untuk perilaku Ansible — mis. file `inventory` yang dipakai, kunci privat, user remote, timeout, dsb. Pengaturan di sini membuat perintah jadi lebih singkat karena tidak perlu menambahkan opsi tiap kali.
+> Catatan: IP bisa berbeda tergantung konfigurasi NAT di host. Gunakan `ip a` di tiap VM untuk memverifikasi alamat.
 
-3. **Contoh ringkas isi `[defaults]`:**
+---
 
+## 🔬 Fungsi Modul Ini
+
+* Menunjukkan cara menulis dan menggunakan file **inventory** sederhana.
+* Menjelaskan tujuan file `ansible.cfg` dan contoh pengaturannya.
+* Praktik *ad‑hoc commands* dasar: `ping`, `gather_facts`, `apt` (update/instal), `--limit` dan penggunaan `--key-file`.
+* Menunjukkan pengertian `--become` / `--ask-become-pass` dan cara melihat log paket di host.
+
+Singkat: **Control Node (PC) → Ansible ad‑hoc → multiple target (SRV1, SRV2)** untuk administrasi cepat.
+
+---
+
+## ✅ Manfaat / Pembelajaran
+
+* Paham peran *inventory*, *ansible.cfg*, dan opsi CLI.
+* Bisa cepat cek konektivitas SSH (`ansible ... -m ping`) antar host.
+* Mampu menjalankan perintah manajemen paket serempak (apt) dengan eskalasi hak.
+* Memahami output Ansible dan tempat log di target.
+
+---
+
+## ⚙️ Persiapan Singkat
+
+1. Pastikan Ansible terinstal di **PC (workstation/control node)**:
+
+   ```bash
+   sudo apt update && sudo apt install -y ansible
    ```
-   [defaults]
-   inventory = inventory
-   private_key_file = ~/.ssh/ansible
-   remote_user = ubuntu
-   host_key_checking = False   # (opsional — nonaktifkan strict host key checking)
-   forks = 10
-   ```
+2. Siapkan SSH key untuk Ansible (contoh: `~/.ssh/ansible`) dan pastikan public key sudah ada di `~/.ssh/authorized_keys` di SRV1 & SRV2.
+3. Buat folder project, file `inventory`, dan `ansible.cfg` di dalamnya.
 
-4. **Beberapa opsi umum di `[defaults]` dan gunanya singkat:**
+Contoh struktur:
 
-   * `inventory` → path ke file inventory default.
-   * `private_key_file` → path ke SSH private key default.
-   * `remote_user` → user SSH yang dipakai jika tidak diberi di command.
-   * `host_key_checking` → matikan/aktifkan pengecekan fingerprint host (keamanan vs kenyamanan).
-   * `forks` → berapa banyak koneksi paralel (skala eksekusi).
+```
+ansible-project/
+├─ inventory
+└─ ansible.cfg
+```
 
-5. **Prioritas konfigurasi (singkat):**
+---
 
-   * Opsi yang kamu tulis **di command line** (mis. `--key-file`) punya prioritas tertinggi.
-   * Lalu environment variables.
-   * Untuk file config, urut prioritas: file yang ditunjuk `ANSIBLE_CONFIG` → `./ansible.cfg` (direktori kerja saat ini) → `~/.ansible.cfg` → `/etc/ansible/ansible.cfg`.
+## 🧾 Contoh `inventory` (sederhana)
 
-6. **Tips praktis:**
+```
+[ip add srv1]
+[ip add srv2]
+```
 
-   * Gunakan `[defaults]` dan simpan `ansible.cfg` di folder project supaya mudah.
-   * Pastikan permission private key `~/.ssh/ansible` aman (`chmod 600`).
-   * Jangan gunakan `host_key_checking = False` di produksi tanpa pertimbangan keamanan.
+> Catatan: Inventory bisa diperluas (grup, host_vars, dll.) saat lingkungan tumbuh.
 
-Mau saya perbaiki file `ansible.cfg` kamu jadi format yang benar dan rapi sesuai contoh di atas? 😊
+---
+
+## 🔧 Contoh `ansible.cfg` (benar — gunakan `[defaults]`)
+
+```
+[defaults]
+inventory = inventory
+private_key_file = ~/.ssh/ansible
+remote_user = root
+host_key_checking = False
+forks = 10
+```
+
+* `inventory` → file default yang dipakai Ansible
+* `private_key_file` → key yang akan dipakai bila tidak override di CLI
+* `remote_user` → user SSH default
+* `host_key_checking = False` → nonaktifkan strict host key check (opsional, gunakan hati‑hati)
+
+---
+
+## 🚀 Perintah Ad‑hoc Penting & Penjelasan
+
+### 1) Tes koneksi & autentikasi
+
+```bash
+ansible all --key-file ~/.ssh/ansible -i inventory -m ping
+```
+
+**Tujuan:** cek apakah control node bisa SSH ke semua host di `inventory` dan modul Ansible dapat berjalan.
+
+* `-m ping` = modul Ansible (bukan ICMP); mengembalikan `pong` bila sukses.
+* `--key-file` = override key jika tidak pakai `ansible.cfg`.
+* `-i inventory` = gunakan file inventory yang ditentukan.
+
+Jika `SUCCESS` → host reachable dan Python interpreter di target tersedia.
+
+---
+
+### 2) Cara singkat setelah `ansible.cfg` benar
+
+```bash
+ansible all -m ping
+```
+
+Karena `ansible.cfg` punya `inventory` & `private_key_file`, perintah jadi pendek.
+
+---
+
+### 3) Kumpulkan fakta sistem
+
+```bash
+ansible all -m setup
+# alias: ansible all -m gather_facts  (setup module mengumpulkan facts)
+ansible all -m setup --limit 192.168.1.1
+```
+
+* `setup`/`gather_facts` = ambil informasi OS, CPU, memori, IP, dsb.
+* `--limit` membatasi target agar hanya host tertentu yang diproses.
+
+---
+
+### 4) Mengelola paket apt (Debian/Ubuntu)
+
+```bash
+ansible all -m apt -a "update_cache=true" --become --ask-become-pass
+ansible all -m apt -a "name=vim-nox state=present" --become --ask-become-pass
+ansible all -m apt -a "name=snapd state=latest" --become --ask-become-pass
+```
+
+**Arti komponen:**
+
+* `-m apt` → modul apt (manajemen paket)
+* `update_cache=true` → jalankan `apt-get update` sebelum tindakan
+* `name=` → nama paket
+* `state=present|latest` → `present` = terpasang; `latest` = update ke versi terbaru bila tersedia
+* `--become` → jalankan dengan eskalasi (sudo)
+* `--ask-become-pass` / `-K` → minta password sudo saat eksekusi
+
+**Catatan:** modul `apt` memerlukan Python/pustaka (`python3-apt`) di target; jika tidak ada akan error.
+
+---
+
+## 🛟 Troubleshooting & Tips Praktis
+
+* Jika `UNREACHABLE` → autentikasi SSH gagal (cek key, user, permission, `ansible.cfg`).
+* Jika `FAILED` pada modul apt → periksa apakah `python3`/`python3-apt` ada di target.
+* Jika `ssh-copy-id` sudah menambahkan key tapi login masih minta password: cek permission `chmod 700 ~/.ssh` & `chmod 600 ~/.ssh/authorized_keys` di target.
+* Gunakan `ssh -vvv user@host` untuk debug SSH, dan `ansible -vvv ...` untuk debug Ansible.
+
+---
+
+## 🔍 Melihat log apt di target
+
+* `/var/log/apt/history.log` — riwayat paket yang diinstall/upgrade
+* `/var/log/apt/term.log` — output terminal apt
+* `/var/log/dpkg.log` — catatan dpkg
+
+Contoh lihat history:
+
+```bash
+ssh root@192.168.1.1 'tail -n 80 /var/log/apt/history.log'
+```
+
+---
+
+## 📚 Best Practices singkat
+
+* Simpan `ansible.cfg` di root project agar mudah dipakai ulang.
+* Jaga izin private key: `chmod 600 ~/.ssh/ansible`.
+* Hindari `host_key_checking = False` di produksi tanpa audit.
+* Gunakan `cache_valid_time` di modul apt jika sering menjalankan update: mis. `update_cache=true cache_valid_time=3600`.
+* Gunakan grup dan host_vars pada inventory saat lingkungan berkembang.
+
+---
+
+## 📌 Metadata
+
+* **Author:** Raka (@rkyla_m)
+* **Modul:** Ad‑hoc Command Ansible (NAT / Internet)
+* **Platform:** Debian 12 + VMware Workstation (NAT)
+* **Tanggal:** 2025-10-10
+
